@@ -1,0 +1,135 @@
+{
+    "definition": {
+        "$schema": "https://schema.management.azure.com/providers/Microsoft.Logic/schemas/2016-06-01/workflowdefinition.json#",
+        "contentVersion": "1.0.0.0",
+        "actions": {
+            "Read_blob_content": {
+                "type": "ServiceProvider",
+                "inputs": {
+                    "parameters": {
+                        "containerName": "submitted-time-roar-qa",
+                        "blobName": "@triggerBody()?['name']"
+                    },
+                    "serviceProviderConfiguration": {
+                        "connectionName": "AzureBlob-1",
+                        "operationId": "readBlob",
+                        "serviceProviderId": "/serviceProviders/AzureBlob"
+                    }
+                },
+                "runAfter": {}
+            },
+            "InitializeSubmittedArray": {
+                "type": "InitializeVariable",
+                "inputs": {
+                    "variables": [
+                        {
+                            "name": "csv_submitted",
+                            "type": "array",
+                            "value": "@outputs('Compose_—_DataLines')"
+                        }
+                    ]
+                },
+                "runAfter": {
+                    "Compose_—_DataLines": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Compose_Lines": {
+                "type": "Compose",
+                "inputs": "@split(\r\n  replace(\r\n    replace(\r\n      outputs('Compose_RawCSV'),\r\n      '\r\n','\n'\r\n    ),\r\n    '\r',''\r\n  ),\r\n  '\n'\r\n)\r\n",
+                "runAfter": {
+                    "Compose_RawCSV": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Select": {
+                "type": "Select",
+                "inputs": {
+                    "from": "@variables('csv_submitted')",
+                    "select": {
+                        "LionLogin": "@split(item(), ',')[0]\r\n"
+                    }
+                },
+                "runAfter": {
+                    "InitializeSubmittedArray": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "For_each": {
+                "type": "foreach",
+                "foreach": "@outputs('Select')['body']",
+                "actions": {
+                    "Send_an_email_(V2)": {
+                        "type": "ApiConnection",
+                        "inputs": {
+                            "host": {
+                                "connection": {
+                                    "referenceName": "office365"
+                                }
+                            },
+                            "method": "post",
+                            "body": {
+                                "To": "tomsuare@publicisgroupe.net",
+                                "Subject": "test submitted",
+                                "Body": "<p class=\"editor-paragraph\"><br>@{variables('csv_submitted')}</p><p class=\"editor-paragraph\">your LL @{items('For_each')}</p>",
+                                "Importance": "High"
+                            },
+                            "path": "/v2/Mail"
+                        }
+                    }
+                },
+                "runAfter": {
+                    "Select": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Compose_—_DataLines": {
+                "type": "Compose",
+                "inputs": "@skip(outputs('Compose_Lines'), 1)\r\n",
+                "runAfter": {
+                    "Compose_Lines": [
+                        "SUCCEEDED"
+                    ]
+                }
+            },
+            "Compose_RawCSV": {
+                "type": "Compose",
+                "inputs": "@base64ToString(\r\n  body('Read_blob_content')?['content']?['$content']\r\n)\r\n",
+                "runAfter": {
+                    "Read_blob_content": [
+                        "SUCCEEDED"
+                    ]
+                }
+            }
+        },
+        "outputs": {},
+        "triggers": {
+            "When_a_blob_is_added_or_updated": {
+                "type": "ServiceProvider",
+                "inputs": {
+                    "parameters": {
+                        "path": "submitted-time-roar-qa"
+                    },
+                    "serviceProviderConfiguration": {
+                        "connectionName": "AzureBlob-1",
+                        "operationId": "whenABlobIsAddedOrModified",
+                        "serviceProviderId": "/serviceProviders/AzureBlob"
+                    }
+                },
+                "conditions": [
+                    {
+                        "expression": "@greaterOrEquals(   ticks(triggerBody()?['properties']?['lastModified']),   ticks(addMinutes(utcNow(), -5)) )"
+                    },
+                    {
+                        "expression": "@contains(toLower(triggerBody()?['properties']?['blobName']), 'list')"
+                    }
+                ]
+            }
+        }
+    },
+    "kind": "Stateful"
+}
